@@ -1,0 +1,284 @@
+---
+title: "NetworkAnalyticsWorkbook"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+######################Assignment 2###########################
+######INSTRUCTIONS###########################################
+# Go through the code chunks below and perform the tasks asked of you in each chunk. Answer specific questions (Q1-Q5) to pick up points.
+#Q1: 1 points
+#Q2: 5 points
+#Q3: 2 points
+#Q4: 2 points
+#Q5: 12 points
+#Q6: 3 points
+
+#Total 25 points
+```
+
+```{r cars}
+#install packages: If you have already installed them for the class exercise, there is no need to run this step.
+
+install.packages(c("igraph", "igraphdata", "ape", "sand", "network","sna"))
+```
+
+```{r}
+library(readr) #this package should be installed already
+#read the edge data from the csv file on canvas, download the csv file in the same folder as this rmd file so that the code can find the file
+mydata = read.csv("NWADataEdges.csv")
+
+#remove the first column with the id of the node, they will be given automatic ids x1, x2, ...
+mydata <- mydata[-c(1)]
+```
+
+```{r}
+library(igraph)
+#convert the adjacency matrix data into a matrix in R
+mydatamatrix = as.matrix(mydata)
+
+#convert the matrix into a graph 
+mygraph <- graph_from_adjacency_matrix(mydatamatrix, mode = c("undirected"), weighted = TRUE,
+  diag = FALSE, add.colnames = NULL, add.rownames = NA)
+
+#Q1: Plotting [1 points]
+
+#plot mygraph using different layouts (see the code used in class)
+#compare the layouts visually. Which one has a cleaner layout?
+#can you see any motifs (special network patterns) already?
+#write code below
+igraph.options(vertex.size=30, edge.arrow.size=0.5, vertex.label=NULL)
+plot(mygraph)
+title("Basic")
+
+plot(mygraph, layout=layout.circle)
+title("Circle")
+
+plot(mygraph,layout=layout.fruchterman.reingold)
+title("Fruchterman-Reingold")
+
+plot(mygraph, layout=layout.kamada.kawai)
+title("Kamada Kawai")
+
+# Answer 1:
+# The Frucheterman-Reingold produced a cleaner layout, in which we can clearly see 5 motifs.
+```
+
+```{r}
+#see the vertex and edge attributes
+#think about how you can use the edge weight data
+#in this data set the edge weight data is the strength of tie between nodes, and this is an undirected network graph.
+#write code below
+library(igraph)
+list.vertex.attributes(mygraph)
+list.edge.attributes(mygraph)
+```
+
+```{r}
+#Let us run a histogram analysis to discuss how the nodes are distributed and how the network may have evolved in response to Q2 (asked next).
+library(sand)
+
+
+hist(degree(mygraph), col="lightblue", xlim=c(0,50),
+   xlab="Vertex Degree", ylab="Frequency", main="")
+
+#vertex strength is the weights of the edges incident on the vertex.
+hist(graph.strength(mygraph), col="pink",
+   xlab="Vertex Strength", ylab="Frequency", main="")
+
+
+#log-log distribution to understand the 
+d.mygraph <- degree(mygraph) 
+dd.mygraph <- degree.distribution(mygraph)
+d <- 1:max(d.mygraph)-1
+ind <- (dd.mygraph != 0)
+
+plot(d[ind], dd.mygraph[ind], log="xy", col="blue",
+   xlab=c("Log-Degree"), ylab=c("Log-Intensity"),
+   main="Log-Log Degree Distribution")
+
+
+a.nn.deg.mygraph <- graph.knn(mygraph,V(mygraph))$knn
+plot(d.mygraph, a.nn.deg.mygraph, log="xy", 
+   col="goldenrod", xlab=c("Log Vertex Degree"),
+   ylab=c("Log Average Neighbor Degree"))
+```
+
+```{r}
+#Q2: [5 points]
+# How are vertices of different degree connected to each other?
+# Can you see any discenrible patterns like you saw in the Yeast dataset in the class exercise?
+
+# Answer 2:
+# Both low and high degree vertices have low and high degree neighbors.
+# Lowest and highest degress vertices tend to have lower degree neighbors.
+# While middle-range degree vertices tend to have relatively higher degree neighbors.
+
+# The degree and strength distribution of mygraph seem to follow normal distribution.
+# And that high degree vertices tend to have higher intensity.
+# There aren't any discenrible patterns like we saw in the Yeast dataset.
+
+```
+
+```{r}
+# Compute the different centrality measures (we learnt in class) for the different vertices (nodes).
+#For example, for degree, we will write the following code.
+library(igraph)
+print("Degree Centrality")
+degree(mygraph)
+
+print("Closeness Centrality")
+closeness(mygraph)
+
+print("Betweenness Centrality")
+betweenness(mygraph)
+
+print("Eigen Vector Centrality")
+evcent(mygraph)
+
+#Also, plot the graph in a radial pattern to understand if a centraility measure is able to bring out a few important nodes in the center. If there are many nodes with high centrality scores then that measure may not be a good distinguisher between nodes when it comes to designing a strategy to target a few nodes for purposes such as diffusion, seeding a coupon, etc.
+#write code below
+library(igraphdata)
+A <- get.adjacency(mygraph, sparse=FALSE)
+
+library(network)
+g <- network::as.network.matrix(A)
+
+library(sna)
+sna::gplot.target(g, degree(g), main="Degree Centrality", circ.col="skyblue",
+   usearrows = FALSE,
+   vertex.col=c("blue", rep("red", 32), "yellow"),
+   edge.col="darkgray")
+
+sna::gplot.target(g, closeness(g), main="Closeness Centrality", circ.col="skyblue",
+   usearrows = FALSE,
+   vertex.col=c("blue", rep("red", 32), "yellow"),
+   edge.col="darkgray")
+
+sna::gplot.target(g, betweenness(g), main="Betweenness Centrality", circ.col="skyblue",
+   usearrows = FALSE,
+   vertex.col=c("blue", rep("red", 32), "yellow"),
+   edge.col="darkgray")
+
+sna::gplot.target(g, evcent(g), main="Eigen Vector Centrality", circ.col="skyblue",
+   usearrows = FALSE,
+   vertex.col=c("blue", rep("red", 32), "yellow"),
+   edge.col="darkgray")
+
+#repeat the process for other centrality measures
+
+
+
+#Q3: [2 points] Perform the two steps below (in this chunk).
+#Copy these centrality measures of the nodes into the CSV file NWADataNodes. Use the text to column feature in Excel to copy-paste.
+#Normalize these scores in a separate column. You can use a simple normalization technique by dividing a centrality score of a node by the highest number in that column to get a score between 0 and 1.
+
+```
+
+```{r}
+#Q4 [2 points]: 
+#Analyze Network Cohesion Characteristics
+#Detect clique sub-graphs with different lengths, transitivity (local and global)
+#Interpret the result in terms of your targeting strategy for seeding limited coupons.
+
+#write code here
+library(igraph)
+table(lapply(cliques(mygraph), length))
+
+# check what sub graphs are part of cliques of size 4
+cliques(mygraph)[sapply(cliques(mygraph), length) == 4]
+
+# check what sub graphs are part of cliques of size 3
+cliques(mygraph)[sapply(cliques(mygraph), length) == 3]
+
+# check what sub graphs are part of cliques of size 2
+cliques(mygraph)[sapply(cliques(mygraph), length) == 2]
+
+# global transitivity: ratio of triangles to connected triples
+transitivity(mygraph, type="global")
+
+#ratio of traingles to connected triples each vertex is a part of
+transitivity(mygraph, type="local")
+
+# Answer 4:
+# Result shows 18 nodes (cliques of size 1)
+# 24 edges (cliques of size 2)
+# 5 triangles (cliques of size 3)
+# Globally 35% of the connected triples close in this manner
+```
+
+```{r}
+#Detect communities
+# write code here
+library(igraph)
+library(igraphdata)
+
+#Hierrchical CLustering
+kc <- fastgreedy.community(mygraph)
+
+#number of communities detected
+length(kc)
+
+#size of each community
+sizes(kc)
+
+#membership of each community
+membership(kc)
+
+#visualization
+#modular optimization partitioning
+plot(kc, mygraph)
+
+#dendoggram
+library(ape)
+dendPlot(kc, mode="phylo")
+```
+
+```{r}
+#You have sufficient information by now from your network analysis.
+#Note the clusters and communities. This information will be useful in putting forth a targeting/seeding strategy.
+
+#Note that the network analysis has not taken the edge weight into consideration. We are focusing only on the structure of the network from the connections. The edge weight information is important, though. And, you must use that to compute CIV for each node where instead of simply adding the influence of each connection you will weight the influence by weighting it with the edge weight.
+
+#The edge weight matrix based on EXAMPLE CLV values below. You need to copy paste the correct CLV value for the 20 nodes below from the CSV file you are using for computation.
+
+```
+
+```{r}
+#these value below are only an example; replace them with the right ones from the VDI column in NWADataNodes.csv.
+
+VDIMat <- as.matrix(c(20,25,15,20,5,30,15,10,30,20,5,5,5,10,15,5,20,25,5,30))
+myCIV <- mydatamatrix %*% VDIMat
+#we can transpose to make it easy to copy paste in excel, modify it to numbers using text to column (under data tab) and then paste as transpose in Excel.
+
+t(myCIV)
+```
+
+```{r}
+#You can copy the CIV for the nodes from here to the CSV file and use Data -> Text to Columns functionality in Excel to paste these CIV numbers in the appropriate column to compute the CNLV for each node, and then asnwer the remaining questions (shown below) in the assignment.
+#The remaining steps (computation of CNLV of each node) can be completed in Excel using the two CSV files (NWADataEdges and NWADataNodes) provided to you.
+
+#Q5: [12 points]
+#Let us say that your budget allows you to only target three nodes. Based on your analysis of CIV, CNLV and network characteristics identify the top three nodes you will target to successfully diffuse the product in the network. Consider the last slide of the powerpoint lecture deck where we categorized users based on the CLV and CIV. Justify your answer with your analysis.
+
+# Answer 5:
+# I would target nodes 4, 8 and 3 since they are the top 3 in CIV which means they are likely to be influencers. Although they have relatively low CLV, their high influence value would bring up their own lifetime value, which lead to other people buying the product. If the goal was to successfully diffuse the product in the network, then these 3 nodes would lead to more people buying.
+
+# Alternatively, if the goal was to generate the most revenue, I would target 4, 3 and 2, because they are the top 3 in CNLV, where CNLV = CLV + CIV.
+
+#Q6: [3 points]
+#In the assignment, the acquisition cost, retention cost and referral fee of all the nodes is the same. What if such cost of the top three nodes you selected for Q5 become so high that you cannot directly target them. What will be your strategy then? Can you influence the influencer? How does this strategy compare to your answer in Q5?
+
+# Answer 6:
+# I would then target the top 3 for PopDiffMetric, which are 3, 4 and 7. But because 3 and 4 have high cost, then I would target the the next 2 in the rank, which are 5 and 13. As we can see from the community graph, 7, 5 and 13 and connected to many other nodes, they are at the key locations.
+```
+
