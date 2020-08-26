@@ -1,0 +1,369 @@
+---
+title: "APA HW2 Group1"
+author: "Y. He, H. Lin, S. Qiu, W. Zhang, Yiyan Zhang"
+date: "11/16/2019"
+output: 
+  pdf_document: 
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# load libraries
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(margins)
+
+# import data
+data <- read.csv("NFL Play by Play 2009-2016 (v3).csv")
+```
+
+# I. Overview
+## For this project, we chose the NFL historical data, built a logistic regression model to find which variable could influence the home team winning rate, and which variable has the biggest impact on the winning rate. Based on our analysis, we provided some insights for the teams.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Data Cleaning
+# add levels to categorical variables with binary outcomes
+levels(data$PassOutcome) <- c(levels(data$PassOutcome), "1", "0")
+levels(data$ExPointResult) <- c(levels(data$ExPointResult), "1", "0")
+levels(data$TwoPointConv) <- c(levels(data$TwoPointConv), "1", "0")
+levels(data$FieldGoalResult) <- c(levels(data$FieldGoalResult), "1", "0")
+
+# mutate data to binary outcomes with "1" and "0"
+data <- data %>%
+  mutate(Pass_Complete = ifelse(PassOutcome == 'Complete', 1, 0)) %>%
+  mutate(ExPoint_Made = ifelse(ExPointResult == 'Made', 1, 0)) %>%
+  mutate(TwoPoint_Success = ifelse(TwoPointConv == 'Success', 1, 0)) %>%
+  mutate(FieldGoal_Made = ifelse(FieldGoalResult == 'Good', 1, 0))
+
+# assign 0 to NA
+data$Pass_Complete[is.na(data$Pass_Complete)] <- 0
+data$ExPoint_Made[is.na(data$ExPoint_Made)] <- 0
+data$TwoPoint_Success[is.na(data$TwoPoint_Success)] <- 0
+data$FieldGoal_Made[is.na(data$FieldGoal_Made)] <- 0
+data$PassLength[is.na(data$PassLength)] <- 0
+
+# select desired variables
+nfl <- data %>%
+  select("GameID", "posteam", "Yards.Gained", "Touchdown",
+         "ExPoint_Made", "TwoPoint_Success", "FieldGoal_Made", 
+         "Safety", "Pass_Complete", "InterceptionThrown", 
+         "Reception", "Fumble", "Sack", "Penalty.Yards", 
+         "HomeTeam", "AwayTeam", "Season")
+```
+
+# II. Data
+## The original data we have is 2009 – 2016 NFL seasons’ historical data, each row in the raw data is a single play in each game. First, we selected 16 important variables from over 100 variables, and then aggregate them into game level statistics. Moreover, based on existing statistics, we created a new variable, “season index”, which is the order of the game for each home team in a season (e.g. 3 means the third game in that season). We hope this indicator could reflect how late in a season would affect the home team’s winning rate.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# aggregate statistics to game level
+nfl1 <- nfl %>%
+  group_by(GameID, posteam) %>%
+  summarise(Yards_Gained = sum(Yards.Gained), 
+            TD_Count = sum(Touchdown), 
+            EPM_Count = sum(ExPoint_Made), 
+            TPS_Count = sum(TwoPoint_Success),
+            FGM_Count = sum(FieldGoal_Made), 
+            Safety_Count = sum(Safety),
+            PC_Count = sum(Pass_Complete), 
+            IT_Count = sum(InterceptionThrown), 
+            Reception_Count = sum(Reception), 
+            Fumble_Count = sum(Fumble), 
+            Sack_Count = sum(Sack), 
+            Penalty_Yards = sum(Penalty.Yards),
+            Home_Team = HomeTeam[1],
+            Away_Team = AwayTeam[1],
+            Season = mean(Season))
+
+# calculate total score for each game
+nfl1 <- nfl1 %>%
+  mutate(Score = 6*TD_Count + 1*EPM_Count + 2*TPS_Count + 3*FGM_Count + 2*Safety_Count)
+
+# remove empty rows
+nfl1 <- nfl1[-which(nfl1$posteam == ""), ]
+
+# add column HomeWin
+nfl1 <- nfl1 %>%
+  mutate(HomeWin = Score)
+
+# determine which hometeam wins
+n <- seq(1, by = 2, len = 2048)
+for (i in n) {
+  if(nfl1$Score[i]>nfl1$Score[i+1]) {
+    nfl1$HomeWin[i] <- 1
+    nfl1$HomeWin[i+1] <- 0
+  } else {
+    nfl1$HomeWin[i] <- 0
+    nfl1$HomeWin[i+1] <- 1
+  }
+}
+
+# keep only hometeam statistics
+nfl1$posteam <- droplevels(nfl1$posteam, exclude = "")
+i <- which(nfl1$posteam == nfl1$Home_Team)
+nfl_home <- nfl1[i, ]
+
+# determine how late in the season
+nfl_home <- nfl_home %>%
+  group_by(Season, Home_Team) %>%
+  mutate(Season_Index = row_number())
+
+# select final input variables for models
+nfl_fin <- nfl_home %>%
+  select(Season, GameID, Home_Team, Away_Team, Season_Index, Yards_Gained, Penalty_Yards,
+         PC_Count, IT_Count, Fumble_Count, Sack_Count, Score, HomeWin)
+
+# convert categorical variables to factors
+nfl_fin$Season_Index <- as.factor(nfl_fin$Season_Index)
+nfl_fin$Season <- as.factor(nfl_fin$Season)
+```
+
+# III. Descriptive Analysis
+
+## Before going to the model, we first did some descriptive analysis on some variables which are not used for the regression model.
+
+## This Win Rate of Home Team graph shows that team NE and SEA have the highest win rate in their home games in the past, 0.85 and 0.75 respectively. Team JAX and LA have extremely low win rates in their home games compared to other teams, which are around 0.05.
+
+```{r, fig.height = 6, fig.width = 20, echo = FALSE, warning = FALSE, message = FALSE}
+# hometeam win rate
+home_w <- nfl_fin %>%
+  select(Home_Team, HomeWin)
+
+# convert factors to number
+home_w$HomeWin <- as.numeric(home_w$HomeWin)
+
+# calculate hometeam win rate
+win_rate <- home_w%>%
+  group_by(Home_Team) %>%
+  summarise(WR = sum(HomeWin)/(8*8)) %>%
+  mutate(Color = ifelse(WR >= mean(WR), "> avg", "< avg"))
+
+# plot
+ggplot(win_rate, aes(x = reorder(Home_Team, -WR), y = WR, fill = Color)) +
+  geom_col() +
+  geom_hline(aes(yintercept = mean(WR))) +
+  ggtitle("Win rate of home team") +
+  xlab("Home Team") +
+  ylab("Win Rate %") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## This Average Turnover of Home Team per Game graph shows the distribution of average home team turnover. NE has the lowest turnover while LA has the highest. This corresponds to the above graph, the more turnovers, the less likely a home team will win. As a result, teams with a high average turnover could potentially improve their win rate if they can reduce their turnovers in games.
+
+```{r, fig.height = 6, fig.width = 20, echo = FALSE, warning = FALSE, message = FALSE}
+# hometeam average turnover per game
+turnover <- nfl_fin %>%
+  select(Season, GameID, Home_Team, IT_Count, Fumble_Count, Sack_Count) %>%
+  mutate(turnover = (IT_Count+Fumble_Count+Sack_Count)) %>%
+  group_by(Home_Team) %>%
+  summarise(TO = mean(turnover)) %>%
+  mutate(Color = ifelse(TO <= mean(TO), "< avg", "> avg"))
+
+# plot
+ggplot(turnover, aes(x = reorder(Home_Team, TO), y = TO, fill = Color)) +
+  geom_col() +
+  geom_hline(aes(yintercept = mean(TO))) +
+  ggtitle("Average turnover of home team per game") +
+  xlab("Home Team") +
+  ylab("Averag Turnover") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## This Deep vs. Short Pass graph shows the relationship of passing styles of different quarterbacks. There doesn't seem to be an overall preference towards short passes or deep passes. Success rate of passes doesn't seem to be influenced by the type of passes.
+
+```{r, fig.height = 6, fig.width = 20, echo = FALSE, warning = FALSE, message = FALSE}
+# select statistics of quarter backs
+QB <- data %>%
+  filter(Season == 2016) %>%
+  select(Passer, PassOutcome, PassLength) %>%
+  na.omit(QB)
+
+# calculate rate of successful passes
+QB_PassOutcome <- QB %>%
+  group_by(Passer) %>%
+  count(PassOutcome) %>%
+  spread(PassOutcome, n)
+colnames(QB_PassOutcome) <- c("Passer", "Yes", "No")
+QB_PassOutcome$Yes[is.na(QB_PassOutcome$Yes)] <- 0
+QB_PassOutcome$No[is.na(QB_PassOutcome$No)] <- 0
+
+QB_SuccessRate <- QB_PassOutcome %>%
+  filter((Yes+No) > 1) %>%
+  mutate(SuccessRate = Yes/(Yes+No))
+
+# calculate number of short and deep passes
+QB_PassLength <- QB %>%
+  group_by(Passer) %>%
+  count(PassLength) %>%
+  spread(PassLength, n)
+QB_PassLength$Short[is.na(QB_PassLength$Short)] <- 0
+QB_PassLength$Deep[is.na(QB_PassLength$Deep)] <- 0
+
+# merge two data frames
+QB_fin <- merge(QB_SuccessRate, QB_PassLength, by = "Passer")
+
+# plot
+ggplot(QB_fin, aes(x = Short, y = Deep, col = SuccessRate)) +
+  geom_point(size = 3) +
+  coord_fixed(ratio = 1) +
+  geom_text(aes(label = QB_fin$Passer), size = 3, vjust = 3) +
+  ggtitle("Deep vs. short pass") +
+  xlab("Short Pass") +
+  ylab("Deep Pass") +
+  theme(plot.title = element_text(hjust = 0.5))  
+```
+
+## This Successful Reception Rate vs. Yards After Catch graph shows that there is not a single team that have a great advantage or disadvantage of successful reception and run yards after catch over other teams.
+
+```{r, fig.height = 6, fig.width = 20, echo = FALSE, warning = FALSE, message = FALSE}
+# select statistics of wide receivers
+RC <- data %>%
+  filter(Season == 2016) %>%
+  select(Receiver, Reception, YardsAfterCatch, posteam) %>%
+  na.omit(RC)
+
+# calculate rate of successful receptions
+RC_RecpOutcome <- RC %>%
+  group_by(Receiver) %>%
+  count(Reception) %>%
+  spread(Reception, n)
+colnames(RC_RecpOutcome) <- c("Receiver", "No", "Yes")
+RC_RecpOutcome$Yes[is.na(RC_RecpOutcome$Yes)] <- 0
+RC_RecpOutcome$No[is.na(RC_RecpOutcome$No)] <- 0
+
+RC_SuccessRate <- RC_RecpOutcome %>%
+  filter((Yes+No) > 1) %>%
+  mutate(SuccessRate = Yes/(Yes+No))
+
+# calculate average yards after catch
+RC_Yards <- RC %>%
+  group_by(Receiver) %>%
+  mutate(Num = sum(Reception)) %>%
+  filter(Num > 1) %>%
+  group_by(Receiver) %>%
+  summarise(mean(YardsAfterCatch))
+colnames(RC_Yards) <- c("Receiver", "Yards")
+
+# assign team to receiver
+RC_Team <- RC %>%
+  group_by(Receiver, posteam)
+RC_Team <- RC_Team[c("Receiver", "posteam")]
+  
+# merge data frames
+RC_fin <- merge(RC_SuccessRate, RC_Yards, by = "Receiver")
+RC_fin <- merge(RC_fin, RC_Team, by = "Receiver")
+colnames(RC_fin) <- c("Receiver", "No", "Yes", "SuccessRate", "Yards", "Team")
+
+# plot
+ggplot(RC_fin, aes(x = Yards, y = SuccessRate, col = Team)) +
+  geom_point(size = 3) +
+  ggtitle("Successful reception rate vs. Yards after catch") +
+  xlab("Yards after catch") +
+  ylab("Rate of successful reception") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# logistic model
+m1 <- glm(HomeWin ~ Season+Home_Team+Away_Team+Season_Index+Yards_Gained+Penalty_Yards+
+          PC_Count+IT_Count+Fumble_Count+Sack_Count,
+          data = nfl_fin,
+          family = binomial)
+# summary(m1)
+```
+# IV. Model Interpretation
+
+## 1.	For the season variable, the result of our model shows that the p value is insignificant, so we believe that the season have minimal effects on possibility of home team win.
+
+## 2. For the variable of home team and away team, we can see the coefficient on whether a specific team is home team or away team. We focus on interpret the significant coefficient.
+
+### CLE has a coefficient of -0.676 when they are at home, but a coefficient of 1.264 when they are away, indicating CLE has a higher probability of winning when they are away.
+
+### TB and STL both have significant coefficients (-1.38 and -1.12) when they are at home, indicating TB and STL have higher probability of losing when they are at home.
+
+## 3. Baseline for Season Index is one. When the index is 2, the coefficient is positive; when the index is 3, the coefficient is negative; when the index is 4, the coefficient is negative but closer to 0 than index 3. The same pattern keeps occurring at index 5,6,7, and 8. These coefficients mean that in general, if a team is at home and it is their second game, the possibility of winning increases; when it is the third game, the possibility of winning decreases; when it is the fourth game, the possibility of winning increases, and the same pattern goes on. We believe this is because if a team won a game, they might became slack on the next game, which led to a higher possibility of losing; on the other hand, if they lost a game, they might put more effort on the next game, which increases the possibility of winning for the next game. 
+
+## 4. The coefficient for Penalty Yards is positive, although it might seem weird that a team with higher penalty yard will be more likely to win, our explanation is that this type of team might be more aggressive. The more aggressive a team is, the higher the probability they will be penalized, but at the same time, they may have more aggressive offences, which would enhance their probability of winning. As a result, we suggest those team with low penalty yards and low winning rate to play more aggressive.
+
+## 5.	The coefficient of PC_Count (the count of complete passes) is negative. We believe that more passes do not necessarily leads to winning. In the game, if home team pass a lot, then they might not make effective passes (a lot short passes) and threatening advances. As a result, we recommend the team with high PC_Count and low Winning rate to focus on training of deep passes.
+
+## 6.	Total yards gain has a significant impact on winning, The coefficient is 0.004, so we believe that a home team with higher total yards gain have a higher probability of winning.
+
+## 7.	IT_Count (count of interceptions), Fumble_Count (count of fumbles), and Sack_Count (count of sacks) are different type of turnovers. They all have negative coefficients with significant p-values. We believe that the more turnovers, the smaller the probability of winning. Among the three turnovers, IT_Count has a coefficient of -0.489, which has a larger magnitude than the other two types (fumble = 0.21 and sack = -0.24), we believe this is because interception is a more serious type of turnovers, so the numbers will have a larger impact on probability of winning.
+
+\pagebreak
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# logistic model without categorical variables
+m2 <- glm(HomeWin ~ Yards_Gained+Penalty_Yards+PC_Count+IT_Count+Fumble_Count+Sack_Count,
+          data = nfl_fin,
+          family = binomial)
+# summary(m2)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Source: https://www.r-bloggers.com/probitlogit-marginal-effects-in-r/
+
+mfxboot <- function(modform,dist,data,boot=1000,digits=3){
+  x <- glm(modform, family=binomial(link=dist),data)
+  # get marginal effects
+  pdf <- ifelse(dist=="probit",
+                mean(dnorm(predict(x, type = "link"))),
+                mean(dlogis(predict(x, type = "link"))))
+  marginal.effects <- pdf*coef(x)
+  # start bootstrap
+  bootvals <- matrix(rep(NA,boot*length(coef(x))), nrow=boot)
+  set.seed(1111)
+  for(i in 1:boot){
+    samp1 <- data[sample(1:dim(data)[1],replace=T,dim(data)[1]),]
+    x1 <- glm(modform, family=binomial(link=dist),samp1)
+    pdf1 <- ifelse(dist=="probit",
+                   mean(dnorm(predict(x, type = "link"))),
+                   mean(dlogis(predict(x, type = "link"))))
+    bootvals[i,] <- pdf1*coef(x1)
+  }
+  res <- cbind(marginal.effects,apply(bootvals,2,sd),marginal.effects/apply(bootvals,2,sd))
+  if(names(x$coefficients[1])=="(Intercept)"){
+    res1 <- res[2:nrow(res),]
+    res2 <- matrix(as.numeric(sprintf(paste("%.",paste(digits,"f",sep=""),sep=""),res1)),nrow=dim(res1)[1])     
+    rownames(res2) <- rownames(res1)
+    } else {
+    res2 <- matrix(as.numeric(sprintf(paste("%.",paste(digits,"f",sep=""),sep="")),nrow=dim(res)[1]))
+    rownames(res2) <- rownames(res)
+    }
+  colnames(res2) <- c("marginal.effect","standard.error","z.ratio")  
+  return(res2)
+}
+
+
+library(AER)
+mfx1 <- mfxboot(HomeWin ~ Yards_Gained+Penalty_Yards+
+          PC_Count+IT_Count+Fumble_Count+Sack_Count,"logit", nfl_fin)
+ 
+mfxdat <- data.frame(cbind(rownames(mfx1),mfx1))
+mfxdat$me <- as.numeric(as.character(mfxdat$marginal.effect))
+mfxdat$se <- as.numeric(as.character(mfxdat$standard.error))
+ 
+# coefplot
+library(ggplot2)
+ggplot(mfxdat, aes(V1, marginal.effect,ymin = me - 2*se,ymax= me + 2*se)) +
+  scale_x_discrete('Variable') +
+  scale_y_continuous('Marginal Effect',limits=c(-0.5,1)) +
+  theme_bw() + 
+  geom_errorbar(aes(x = V1, y = me),size=.3,width=.2) + 
+  geom_point(aes(x = V1, y = me)) +
+  geom_hline(yintercept=0) + 
+  coord_flip() +
+  ggtitle("Marginal Effects on Home Team Winning Rate with 95% CI")
+```
+
+# V. Model Evaluation 
+
+## In the first model, some coefficients suggest a lower win rate when team play at home, which conflicts to common sense. The problem may be caused by hidden variables that make “home” and “away” different. For example, weather condition at home stadium and time required for an away team to travel can have significant impact on win rate.
+
+## Another anti-commonsense we observe is high penalty yards inflicts a higher chance of winning. Issue of endogeneity arises that there is in fact, another factor, aggressiveness, influencing both penalty yards and winning probability. As an aggressive team takes more penalties, its aggressive performance also boosts winning probability. To isolate the penalty factor, experiments such as high penalty versus low penalty play analysis can be conducted while keeping other variables constant.
+
+## Endogeneity is identified again when forecasting winning rate based on target players as coach/teammates have effects on both target player and win rate. To address endogeneity, we can either isolate player factor by collecting stats such as height, speed and strength of a target player or by conducting experiments which, although seem not fetchable, rotate players in certain position in one team to evaluate personal performance.
